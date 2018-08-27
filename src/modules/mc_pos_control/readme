@@ -1,0 +1,4 @@
+mc_pos_control_main_git：直接從github上下載的代碼
+mc_pos_control_main_v1：只保留stabilized和position的代碼--(20170410)
+mc_pos_control_main_v2：將速度指令積分成位置指令的代碼--（20170418）
+

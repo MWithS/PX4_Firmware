@@ -1271,16 +1271,11 @@ FixedwingPositionControl::control_position(const math::Vector<2> &current_positi
 
 	_control_position_last_called = hrt_absolute_time();
 
-	PX4_INFO("Begin");
-
 	/* only run position controller in fixed-wing mode and during transitions for VTOL */
 	if (_vehicle_status.is_rotary_wing && !_vehicle_status.in_transition_mode) {
 		_control_mode_current = FW_POSCTRL_MODE_OTHER;
-		PX4_INFO("FW_POSCTRL_MODE_OTHER 1");
 		return false;
 	}
-
-//	PX4_INFO("Run Position Control");
 
 	bool setpoint = true;
 
@@ -1923,8 +1918,6 @@ FixedwingPositionControl::control_position(const math::Vector<2> &current_positi
 
 		_control_mode_current = FW_POSCTRL_MODE_POSITION;
 
-		PX4_INFO("FW_POSCTRL_MODE_POSITION");
-
 		float altctrl_airspeed = get_demanded_airspeed();
 
 		/* update desired altitude based on user pitch stick input */
@@ -2040,8 +2033,6 @@ FixedwingPositionControl::control_position(const math::Vector<2> &current_positi
 
 		_control_mode_current = FW_POSCTRL_MODE_ALTITUDE;
 
-		PX4_INFO("FW_POSCTRL_MODE_ALTITUDE");
-
 		/* Get demanded airspeed */
 		float altctrl_airspeed = get_demanded_airspeed();
 
@@ -2080,8 +2071,6 @@ FixedwingPositionControl::control_position(const math::Vector<2> &current_positi
 
 	} else {
 		_control_mode_current = FW_POSCTRL_MODE_OTHER;
-
-		PX4_INFO("FW_POSCTRL_MODE_OTHER 2");
 
 		/* do not publish the setpoint */
 		setpoint = false;
@@ -2218,7 +2207,6 @@ FixedwingPositionControl::task_main()
 	/*
 	 * do subscriptions
 	 */
-	PX4_INFO("fw position");
 	_global_pos_sub = orb_subscribe(ORB_ID(vehicle_global_position));
 	_pos_sp_triplet_sub = orb_subscribe(ORB_ID(position_setpoint_triplet));
 	_ctrl_state_sub = orb_subscribe(ORB_ID(control_state));
@@ -2238,14 +2226,14 @@ FixedwingPositionControl::task_main()
 	orb_set_interval(_vehicle_land_detected_sub, 200);
 	/* rate limit position updates to 50 Hz */
 	orb_set_interval(_global_pos_sub, 20);
-	PX4_INFO("flag1");
+
 	/* abort on a nonzero return value from the parameter init */
 	if (parameters_update()) {
 		/* parameter setup went wrong, abort */
 		warnx("aborting startup due to errors.");
 		_task_should_exit = true;
 	}
-	PX4_INFO("flag2");
+
 	/* wakeup source(s) */
 	px4_pollfd_struct_t fds[2];
 
@@ -2258,19 +2246,17 @@ FixedwingPositionControl::task_main()
 	_task_running = true;
 
 	while (!_task_should_exit) {
-	//	PX4_INFO("flag3");
+
 		/* wait for up to 500ms for data */
 		int pret = px4_poll(&fds[0], (sizeof(fds) / sizeof(fds[0])), 100);
-		//pret = 1.0f;
+
 		/* timed out - periodic check for _task_should_exit, etc. */
 		if (pret == 0) {
-	//		PX4_INFO("flag3-1");
 			continue;
 		}
 
 		/* this is undesirable but not much we can do - might want to flag unhappy status */
 		if (pret < 0) {
-	//		PX4_INFO("flag3-2");
 			warn("poll error %d, %d", pret, errno);
 			continue;
 		}
@@ -2296,16 +2282,9 @@ FixedwingPositionControl::task_main()
 			/* update parameters from storage */
 			parameters_update();
 		}
-	//	PX4_INFO("flag4");
-		/* only run controller if position changed */
-		// if (fds[1].revents & POLLIN){
-		// 	PX4_INFO("True");
-		// } else{
-		// 	PX4_INFO("False");
-		// }
 
+		/* only run controller if position changed */
 		if (fds[1].revents & POLLIN) {
-		//if (true) {
 			perf_begin(_loop_perf);
 
 			/* load local copies */
@@ -2358,10 +2337,8 @@ FixedwingPositionControl::task_main()
 				if (_control_mode.flag_control_manual_enabled) {
 					_att_sp.roll_body = math::constrain(_att_sp.roll_body, -_parameters.man_roll_max_rad, _parameters.man_roll_max_rad);
 					_att_sp.pitch_body = math::constrain(_att_sp.pitch_body, -_parameters.man_pitch_max_rad, _parameters.man_pitch_max_rad);
-					if (_parameters.vtol_type == 0) {
-					//	PX4_INFO("position pitch\t%8.4f", (double)_att_sp.roll_body);
-					//	PX4_INFO("position roll\t%8.4f", (double)_att_sp.roll_body);
-					//	PX4_INFO("position thrust\t%8.4f", (double)_att_sp.thrust);
+					if (_parameters.vtol_type == 0 && !_vehicle_status.in_transition_mode) {
+						PX4_INFO("roll\t%8.4f", (double)_att_sp.roll_body);
 					}
 				}
 

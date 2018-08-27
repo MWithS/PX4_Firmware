@@ -710,7 +710,6 @@ FixedwingAttitudeControl::task_main()
 	 * do subscriptions
 	 */
 	_att_sp_sub = orb_subscribe(ORB_ID(vehicle_attitude_setpoint));
-	//_att_sp_sub = orb_subscribe(_attitude_setpoint_id);
 	_ctrl_state_sub = orb_subscribe(ORB_ID(control_state));
 	_accel_sub = orb_subscribe_multi(ORB_ID(sensor_accel), 0);
 	_vcontrol_mode_sub = orb_subscribe(ORB_ID(vehicle_control_mode));
@@ -810,9 +809,9 @@ FixedwingAttitudeControl::task_main()
 				 *
 				 * original:			modified:
 				 *
-				 * Rxx  Ryx  Rzx			-Rzx  Ryx  Rxx
+				 * Rxx  Ryx  Rzx		-Rzx  Ryx  Rxx
 				 * Rxy	Ryy  Rzy		-Rzy  Ryy  Rxy
-				 * Rxz	Ryz  Rzz			-Rzz  Ryz  Rxz
+				 * Rxz	Ryz  Rzz		-Rzz  Ryz  Rxz
 				 * */
 				math::Matrix<3, 3> R_adapted = _R;		//modified rotation matrix
 
@@ -975,11 +974,7 @@ FixedwingAttitudeControl::task_main()
 
 				// in STABILIZED mode we need to generate the attitude setpoint
 				// from manual user inputs
-				//yun
-				if (!_vcontrol_mode.flag_control_climb_rate_enabled && !_vehicle_status.in_transition_mode) {
-					// if (_parameters.vtol_type == 0 && _vehicle_status.in_transition_mode) {
-					// 	PX4_INFO("Manual");
-					// }
+				if (!_vcontrol_mode.flag_control_climb_rate_enabled) {
 					_att_sp.roll_body = _manual.y * _parameters.man_roll_max + _parameters.rollsp_offset_rad;
 					_att_sp.roll_body = math::constrain(_att_sp.roll_body, -_parameters.man_roll_max, _parameters.man_roll_max);
 					_att_sp.pitch_body = -_manual.x * _parameters.man_pitch_max + _parameters.pitchsp_offset_rad;
@@ -989,50 +984,11 @@ FixedwingAttitudeControl::task_main()
 					int instance;
 					orb_publish_auto(_attitude_setpoint_id, &_attitude_sp_pub, &_att_sp, &instance, ORB_PRIO_DEFAULT);
 				}
-				// if (_parameters.vtol_type == 0 && !_vehicle_status.in_transition_mode) {
-				// 	PX4_INFO("pitch\t%8.4f", (double)_att_sp.pitch_body);
-				//  	PX4_INFO("roll\t%8.4f", (double)_att_sp.roll_body);
-				//  	PX4_INFO("yaw\t%8.4f", (double)_att_sp.yaw_body);
-				//  }
 
 				roll_sp = _att_sp.roll_body;
 				pitch_sp = _att_sp.pitch_body;
 				yaw_sp = _att_sp.yaw_body;
 				throttle_sp = _att_sp.thrust;
-
-				// yun. For P2 transition, fw control is needed. The setpoint should turn into the fw coordinate.
-				if (_parameters.vtol_type == 0 && _vehicle_status.in_transition_mode) {
-					math::Quaternion q_sp(_att_sp.q_d[0], _att_sp.q_d[1], _att_sp.q_d[2], _att_sp.q_d[3]);
-					math::Matrix<3, 3> _R_sp = q_sp.to_dcm();
-					math::Matrix<3, 3> _R_sp_adapted = _R_sp;
-
-					/* move z to x */
-					_R_sp_adapted(0, 0) = _R_sp(0, 2);
-					_R_sp_adapted(1, 0) = _R_sp(1, 2);
-					_R_sp_adapted(2, 0) = _R_sp(2, 2);
-
-					/* move x to z */
-					_R_sp_adapted(0, 2) = _R_sp(0, 0);
-					_R_sp_adapted(1, 2) = _R_sp(1, 0);
-					_R_sp_adapted(2, 2) = _R_sp(2, 0);
-
-					/* change direction of pitch (convert to right handed system) */
-					_R_sp_adapted(0, 0) = -_R_sp_adapted(0, 0);
-					_R_sp_adapted(1, 0) = -_R_sp_adapted(1, 0);
-					_R_sp_adapted(2, 0) = -_R_sp_adapted(2, 0);
-					math::Vector<3> euler_sp = _R_sp_adapted.to_euler();  //adapted euler angles for fixed wing operation
-
-					/* fill in new attitude data */
-					_R_sp = _R_sp_adapted;
-					roll_sp     = euler_sp(0);
-					pitch_sp   = euler_sp(1);
-					yaw_sp     = euler_sp(2);
-
-					// PX4_INFO("Transition pitch sp:\t%8.4f", (double)pitch_sp);
-					// PX4_INFO("Transition roll sp:\t%8.4f", (double)roll_sp);
-					// PX4_INFO("Transition yaw sp:\t%8.4f", (double)yaw_sp);
-
-				 }
 
 				/* allow manual yaw in manual modes */
 				if (_vcontrol_mode.flag_control_manual_enabled) {

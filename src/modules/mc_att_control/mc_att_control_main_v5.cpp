@@ -48,7 +48,6 @@
 #include <lib/geo/geo.h>
 #include <lib/tailsitter_recovery/tailsitter_recovery.h>
 #include <conversion/rotation.h>
-#include <uORB/topics/vehicle_local_position.h>
 
 extern "C" __EXPORT int mc_att_control_main(int argc, char *argv[]);
 
@@ -77,7 +76,10 @@ public:
 
 private:
 	bool		_task_should_exit;		/**< if true, task_main() should exit */
-
+	////////////////////////////
+	bool 		_takeoff_flag;
+	bool		_integrate_flag;
+	/////////////////////////////	
 	int		_control_task;			/**< task handle */
 
 	int		_ctrl_state_sub;			/**< control state subscription */
@@ -92,7 +94,6 @@ private:
 	int 		_battery_status_sub;		/**< battery status subscription */
 	int		_sensor_gyro_sub[MAX_GYRO_COUNT];	/**< gyro data subscription */
 	int		_sensor_correction_sub;	/**< sensor thermal correction subscription */
-	int		_local_pos_sub;			/**< vehicle local position */
 
 	unsigned	_gyro_count;
 	int 		_selected_gyro;
@@ -119,7 +120,6 @@ private:
 	struct battery_status_s			_battery_status;		/**< battery status */
 	struct sensor_gyro_s			_sensor_gyro;		/**< gyro data before thermal correctons and ekf bias estimates are applied */
 	struct sensor_correction_s		_sensor_correction;	/**< sensor thermal corrections */
-	struct vehicle_local_position_s		_local_pos;		/**< vehicle local position */
 
 	union {
 		struct {
@@ -235,6 +235,7 @@ private:
 		float board_offset[3];					
 	} _params;
 
+
 	TailsitterRecovery *_ts_opt_recovery;	/**< Computes optimal rates for tailsitter recovery */
 
 	/**
@@ -290,6 +291,10 @@ namespace mc_att_control
 
 MulticopterAttitudeControl::MulticopterAttitudeControl() : 
 	_task_should_exit(false),
+	/////////////////////////////////
+	_takeoff_flag(false),
+	_integrate_flag(false),
+	//////////////////////////////////
 	_control_task(-1),
 
 	/* subscriptions */
@@ -303,7 +308,6 @@ MulticopterAttitudeControl::MulticopterAttitudeControl() :
 	_motor_limits_sub(-1),
 	_battery_status_sub(-1),
 	_sensor_correction_sub(-1),
-	_local_pos_sub(-1),
 
 	/* gyro selection */
 	_gyro_count(1),
@@ -331,10 +335,10 @@ MulticopterAttitudeControl::MulticopterAttitudeControl() :
 	_battery_status{},
 	_sensor_gyro{},
 	_sensor_correction{},
-	_local_pos{},
 
 	_saturation_status{},
 	/* performance counters */
+
 	_loop_perf(perf_alloc(PC_ELAPSED, "mc_att_control")),
 	_controller_latency_perf(perf_alloc_once(PC_ELAPSED, "ctrl_latency")),
 	_ts_opt_recovery(nullptr)
@@ -402,7 +406,7 @@ MulticopterAttitudeControl::MulticopterAttitudeControl() :
 	_params_handles.yaw_rate_d		= 	param_find("MC_YAWRATE_D");
 	_params_handles.yaw_rate_ff	 	= 	param_find("MC_YAWRATE_FF");
 	_params_handles.yaw_ff		= 	param_find("MC_YAW_FF");
-	_params_handles.roll_rate_max	= 	param_find("MC_ROLLRATE_MAX");
+	_params_handles.roll_rate_max		= 	param_find("MC_ROLLRATE_MAX");
 	_params_handles.pitch_rate_max	= 	param_find("MC_PITCHRATE_MAX");
 	_params_handles.yaw_rate_max	= 	param_find("MC_YAWRATE_MAX");
 	_params_handles.rattitude_thres 	= 	param_find("MC_RATT_TH");
@@ -445,6 +449,8 @@ MulticopterAttitudeControl::~MulticopterAttitudeControl()
 	if (_control_task != -1) {
 		/* task wakes up every 100ms or so at the longest */
 		_task_should_exit = true;
+		_takeoff_flag = false;
+		_integrate_flag = false;
 
 		/* wait for a second for the task to quit at our request */
 		unsigned i = 0;
@@ -651,12 +657,6 @@ MulticopterAttitudeControl::poll_subscriptions()
 		_selected_gyro = _sensor_correction.selected_gyro_instance;
 	}
 
-	orb_check(_local_pos_sub, &updated);
-
-	if (updated) {
-		orb_copy(ORB_ID(vehicle_local_position), _local_pos_sub, &_local_pos);
-	}
-
 }
 
 /**
@@ -845,22 +845,31 @@ MulticopterAttitudeControl::pid_attenuations(float tpa_breakpoint, float tpa_rat
 
 	_rates_sp_prev = _rates_sp;
 	_rates_prev = rates;
-/*
-	PX4_INFO("local_position_velocity:\t%8.4f\t%8.4f\t%8.4f",
-			 (double)_local_pos.vx,
-			 (double)_local_pos.vy,
-			 (double)_local_pos.vz);
-*/
+
     	//To cancel out the pitch moment caused by thrust and gravity
 	//_att_control(1) = _att_control(1) - 0.3f;
 
-//	PX4_INFO("vz:\t%8.4f", (double)_local_pos.vz);
-//	PX4_INFO("z:\t%8.4f", (double)_local_pos.z);
 	//PX4_INFO("rollrate:\t%8.4f", (double)rates(0));
 	/* update integral only if motors are providing enough thrust to be effective */
-	if (_thrust_sp > MIN_TAKEOFF_THRUST) {
-//	if (_local_pos.z < -0.5f) {
-//		PX4_INFO("Integrate Run");
+
+	// determine whether the integrate work or not by thrust stepoint;
+	// reference thrust curve to understand judge logic;
+
+	//when the vehicle lands, takeoff_flag must and _integrate_flag be false in order to ready for next fly.
+	if(_thrust_sp <= 0.01f)
+	{
+		_takeoff_flag = false;
+		_integrate_flag = false;
+	}
+	// arm time, the vehicle prepare to fly
+	if(_thrust_sp > 0.6f)
+	{
+		_takeoff_flag = true;
+	}
+	// (_thrust_sp < 0.55f) && _takeoff_flag)  ensure the vehicle really leave ground
+	// _integrate_flag: after first integrate, than always do it until land ( if(_thrust_sp <= 0.01f) )
+	if ( ( (_thrust_sp < 0.55f) && _takeoff_flag) || _integrate_flag ) {
+		_integrate_flag = true;
 		for (int i = AXIS_INDEX_ROLL; i < AXIS_COUNT; i++) {
 
 			// Check for positive control saturation
@@ -920,8 +929,6 @@ MulticopterAttitudeControl::task_main()
 	_vehicle_status_sub = orb_subscribe(ORB_ID(vehicle_status));
 	_motor_limits_sub = orb_subscribe(ORB_ID(multirotor_motor_limits));
 	_battery_status_sub = orb_subscribe(ORB_ID(battery_status));
-	// subscribe local_pos for intergral control in attitude rates loop, by yun
-	_local_pos_sub = orb_subscribe(ORB_ID(vehicle_local_position));
 
 	_gyro_count = math::min(orb_group_count(ORB_ID(sensor_gyro)), MAX_GYRO_COUNT);
 
@@ -979,19 +986,13 @@ MulticopterAttitudeControl::task_main()
 			/* check for updates in other topics */
 			poll_subscriptions();
 
-			// Note that in stabilize mode, this will work.
 			if (_v_control_mode.flag_control_rattitude_enabled) {
 				if (fabsf(_manual_control_sp.y) > _params.rattitude_thres ||
 				    fabsf(_manual_control_sp.x) > _params.rattitude_thres) {
 					_v_control_mode.flag_control_attitude_enabled = false;
 				}
 			}
-			/*
-			PX4_INFO("local_position_velocity:\t%8.4f\t%8.4f\t%8.4f",
-				 (double)_local_pos.vx,
-				 (double)_local_pos.vy,
-				 (double)_local_pos.vz);
-			*/
+
 			if (_v_control_mode.flag_control_attitude_enabled) {
 
 				if (_ts_opt_recovery == nullptr) {

@@ -53,6 +53,7 @@ class MulticopterPositionControl
 public:
 	bool		cross_sphere_line(const math::Vector<3> &sphere_c, const float sphere_r,
 					  const math::Vector<3> &line_a, const math::Vector<3> &line_b, math::Vector<3> &res);
+
 };
 
 class McPosControlTests : public UnitTest

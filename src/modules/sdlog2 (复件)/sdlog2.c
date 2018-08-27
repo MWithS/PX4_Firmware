@@ -51,7 +51,6 @@
 #include <px4_posix.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <mathlib/mathlib.h>
 #ifdef __PX4_DARWIN
 #include <sys/param.h>
 #include <sys/mount.h>
@@ -214,8 +213,6 @@ static bool sess_folder_created = false;
  * Log buffer writing thread. Open and close file here.
  */
 static void *logwriter_thread(void *arg);
-
-static bool is_rw_mode;
 
 /**
  * SD log management function.
@@ -1736,10 +1733,7 @@ int sdlog2_thread_main(int argc, char *argv[])
 				log_msg.body.log_VTOL.rw_mode = buf.vtol_status.vtol_in_rw_mode;
 				log_msg.body.log_VTOL.trans_mode = buf.vtol_status.vtol_in_trans_mode;
 				log_msg.body.log_VTOL.failsafe_mode = buf.vtol_status.vtol_transition_failsafe;
-				log_msg.body.log_VTOL.to_fw = buf.vtol_status.in_transition_to_fw;
 				LOGBUFFER_WRITE_AND_COUNT(VTOL);
-
-				is_rw_mode = buf.vtol_status.vtol_in_rw_mode;
 			}
 
 			/* --- GPS POSITION - UNIT #1 --- */
@@ -2269,14 +2263,6 @@ int sdlog2_thread_main(int argc, char *argv[])
 
 			/* --- CONTROL STATE --- */
 			if (copy_if_updated(ORB_ID(control_state), &subs.ctrl_state_sub, &buf.ctrl_state)) {
-
-				if ( !is_rw_mode )
-				{
-					float helper = buf.ctrl_state.roll_rate;
-					buf.ctrl_state.roll_rate = -buf.ctrl_state.yaw_rate;
-					buf.ctrl_state.yaw_rate = helper;
-				}
-
 				log_msg.msg_type = LOG_CTS_MSG;
 				log_msg.body.log_CTS.vx_body = buf.ctrl_state.x_vel;
 				log_msg.body.log_CTS.vy_body = buf.ctrl_state.y_vel;
@@ -2285,11 +2271,6 @@ int sdlog2_thread_main(int argc, char *argv[])
 				log_msg.body.log_CTS.roll_rate = buf.ctrl_state.roll_rate;
 				log_msg.body.log_CTS.pitch_rate = buf.ctrl_state.pitch_rate;
 				log_msg.body.log_CTS.yaw_rate = buf.ctrl_state.yaw_rate;
-				log_msg.body.log_CTS.q_w = buf.ctrl_state.q[0];
-				log_msg.body.log_CTS.q_x = buf.ctrl_state.q[1];
-				log_msg.body.log_CTS.q_y = buf.ctrl_state.q[2];
-				log_msg.body.log_CTS.q_z = buf.ctrl_state.q[3];
-
 				LOGBUFFER_WRITE_AND_COUNT(CTS);
 			}
 		}
@@ -2297,14 +2278,6 @@ int sdlog2_thread_main(int argc, char *argv[])
 		/* --- ATTITUDE --- */
 		if (copy_if_updated(ORB_ID(vehicle_attitude), &subs.att_sub, &buf.att)) {
 			log_msg.msg_type = LOG_ATT_MSG;
-			
-			if ( !is_rw_mode )
-			{
-				float helper = buf.att.rollspeed;
-				buf.att.rollspeed = -buf.att.yawspeed;
-				buf.att.yawspeed = helper;
-			}
-
 			float q0 = buf.att.q[0];
 			float q1 = buf.att.q[1];
 			float q2 = buf.att.q[2];
@@ -2319,38 +2292,6 @@ int sdlog2_thread_main(int argc, char *argv[])
 			log_msg.body.log_ATT.roll_rate = buf.att.rollspeed;
 			log_msg.body.log_ATT.pitch_rate = buf.att.pitchspeed;
 			log_msg.body.log_ATT.yaw_rate = buf.att.yawspeed;
-
-			if ( !is_rw_mode )
-			{
-                			//math::Quaternion q_att(q0, q1, q2, q3);
-				//math::Matrix<3, 3> _R = q_att.to_dcm();
-				float R_H[3][3];
-				R_H[0][0] = -2.0f*(q0*q2 + q1*q3);
-				R_H[0][1] = 2.0f*(q1*q2-q0*q3);
-				R_H[0][2] = q0*q0+q1*q1+q2*q2+q3*q3;
-				R_H[1][0] = -2.0f*(q2*q3-q0*q1);
-				R_H[1][1] = q0*q0-q1*q1+q2*q2-q3*q3;
-				R_H[1][2] = 2.0f*(q1*q2+q0*q3);
-				R_H[2][0] = -(q0*q0-q1*q1-q2*q2+q3*q3);
-				R_H[2][1] = 2.0f*(q0*q1+q2*q3);
-				R_H[2][2] = 2.0f*(q1*q3-q0*q2);
-
-				log_msg.body.log_ATT.pitch = asinf(-R_H[2][0]);
-
-				if (fabsf(log_msg.body.log_ATT.pitch - M_PI_2_F) < 1.0e-3f) {
-					log_msg.body.log_ATT.roll = 0.0f;
-					log_msg.body.log_ATT.yaw = atan2f(R_H[1][2] - R_H[0][1], R_H[0][2] + R_H[1][1]) + log_msg.body.log_ATT.roll;
-
-				} else if (fabsf(log_msg.body.log_ATT.pitch + M_PI_2_F) < 1.0e-3f) {
-					log_msg.body.log_ATT.roll = 0.0f;
-					log_msg.body.log_ATT.yaw = atan2f(R_H[1][2] - R_H[0][1], R_H[0][2] + R_H[1][1]) - log_msg.body.log_ATT.roll;
-
-				} else {
-					log_msg.body.log_ATT.roll = atan2f(R_H[2][1], R_H[2][2]);
-					log_msg.body.log_ATT.yaw = atan2f(R_H[1][0], R_H[0][0]);
-				}
-			}
-
 			LOGBUFFER_WRITE_AND_COUNT(ATT);
 		}
 

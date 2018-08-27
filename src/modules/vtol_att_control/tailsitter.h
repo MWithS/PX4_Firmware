@@ -104,6 +104,7 @@ private:
 	float _thrust_transition_start; // throttle value when we start the front transition
 	float _yaw_transition;	// yaw angle in which transition will take place
 	float _pitch_transition_start;  // pitch angle at the start of transition (tailsitter)
+	float _pitch_p2_start;    //pitch angle setpoint at the end of P1 transition
 
 
 	/** should this anouncement stay? **/
